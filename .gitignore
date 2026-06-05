@@ -1,3 +1,5 @@
 .venv/
 self_play_data/
 __pycache__/
+build/
+mcts_ext.cp311-win_amd64.pyd

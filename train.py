@@ -360,9 +360,25 @@ class RLDataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
+        b = self.boards[idx].copy()
+        p = self.policies[idx].copy()
+        
+        # Dihedral Symmetry Augmentation: 50% chance to flip horizontally
+        if np.random.rand() > 0.5:
+            b = np.flip(b, axis=2).copy()
+            if not hasattr(self, 'flip_map'):
+                self.flip_map = np.zeros(4096, dtype=np.int32)
+                for f in range(64):
+                    for t in range(64):
+                        self.flip_map[f * 64 + t] = (f ^ 7) * 64 + (t ^ 7)
+            
+            p_mirrored = np.zeros_like(p)
+            p_mirrored[self.flip_map] = p
+            p = p_mirrored
+
         return (
-            torch.from_numpy(self.boards[idx]), 
-            torch.from_numpy(self.policies[idx]), 
+            torch.from_numpy(b), 
+            torch.from_numpy(p), 
             torch.tensor([self.values[idx]], dtype=torch.float32),
             torch.tensor([self.dtms[idx]], dtype=torch.float32)
         )
