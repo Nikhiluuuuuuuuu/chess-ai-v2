@@ -173,14 +173,14 @@ class MCTSSearcher:
         self.model = model
         self.device = device
 
-    def search(self, board, max_time=3.0, batch_size=64):
+    def search(self, board, max_time=3.0, batch_size=64, alpha=0.0):
         """Used by app.py: Searches for the best move within a time limit."""
         root = MCTSNode(board.copy())
         start_time = time.time()
-        self._expand_batch([root])
+        self._expand_batch([root], alpha=alpha)
         
         while time.time() - start_time < max_time:
-            self._run_batch_iteration(root, batch_size, max_time, start_time)
+            self._run_batch_iteration(root, batch_size, max_time, start_time, alpha=alpha)
             
         if not root.children: return list(board.legal_moves)[0]
         return max(root.children.items(), key=lambda x: x[1].visit_count)[0]
@@ -195,7 +195,7 @@ class MCTSSearcher:
             nodes_evaluated += leaves_expanded
         return root
 
-    def _run_batch_iteration(self, root, batch_size, max_time=None, start_time=None):
+    def _run_batch_iteration(self, root, batch_size, max_time=None, start_time=None, alpha=0.0):
         leaves_to_expand = []
         while len(leaves_to_expand) < batch_size:
             if max_time and (time.time() - start_time >= max_time): break
@@ -208,14 +208,16 @@ class MCTSSearcher:
                 res = node.board.result()
                 val = 1.0 if res == "1-0" else (-1.0 if res == "0-1" else 0)
                 self._backpropagate(node, val)
-            elif node not in leaves_to_expand:
+                continue
+                
+            if node not in leaves_to_expand:
                 leaves_to_expand.append(node)
                 
         if leaves_to_expand:
-            self._expand_batch(leaves_to_expand)
+            self._expand_batch(leaves_to_expand, alpha=alpha)
         return len(leaves_to_expand)
 
-    def _expand_batch(self, nodes):
+    def _expand_batch(self, nodes, alpha=0.0):
         tensors = torch.stack([board_to_tensor_elite(n.board) for n in nodes]).to(self.device)
         with torch.no_grad():
             with torch.amp.autocast('cuda' if torch.cuda.is_available() else 'cpu', dtype=torch.bfloat16):
@@ -232,7 +234,7 @@ class MCTSSearcher:
                     
                 v_logits = v_out[i].float()
                 wdl_probs = torch.softmax(v_logits, dim=0)
-                value = (wdl_probs[0] * 1.0 + wdl_probs[1] * 0.0 + wdl_probs[2] * -1.0).item()
+                value = (wdl_probs[0] * 1.0 + wdl_probs[1] * alpha + wdl_probs[2] * -1.0).item()
                 ordered_moves = self._get_ordered_moves(node.board)
                 
                 for move in ordered_moves:
@@ -275,12 +277,14 @@ def encode_policy_target(mcts_root):
 def play_single_game(mcts_engine):
     board = chess.Board()
     states, policies = [], []
+    q_values = []
     move_count = 0
     
     while not board.is_game_over() and move_count < 200:
         mcts_root = mcts_engine.search_for_self_play(board, simulations=MCTS_SIMULATIONS)
         states.append(board_to_tensor_elite(board).numpy())
         policies.append(encode_policy_target(mcts_root))
+        q_values.append(mcts_root.value())
         
         moves = list(mcts_root.children.keys())
         visits = [child.visit_count for child in mcts_root.children.values()]
@@ -296,7 +300,11 @@ def play_single_game(mcts_engine):
 
     result = board.result()
     winner = 1.0 if result == "1-0" else (-1.0 if result == "0-1" else 0.0)
-    values = [(winner * (1.0 if (i % 2 == 0) else -1.0)) for i in range(len(states))]
+    values = []
+    for i in range(len(states)):
+        z = winner * (1.0 if (i % 2 == 0) else -1.0)
+        q = q_values[i]
+        values.append(0.5 * z + 0.5 * q)
     dtms = [len(states) - i for i in range(len(states))]
     return states, policies, values, dtms
 

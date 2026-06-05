@@ -80,7 +80,8 @@ def make_move():
         if human_only: return jsonify({'status': 'broadcasted'})
 
         # AI MCTS Search (Evaluates 1024 boards at a time for 3 seconds)
-        ai_move = mcts_engine.search(board, max_time=3.0, batch_size=1024)
+        # alpha=-0.1 gives the engine Dynamic Draw Contempt to avoid drawish lines against humans
+        ai_move = mcts_engine.search(board, max_time=3.0, batch_size=1024, alpha=-0.1)
         board.push(ai_move)
         
         # Final Evaluation for UI metrics
@@ -89,9 +90,12 @@ def make_move():
             with torch.amp.autocast('cuda' if torch.cuda.is_available() else 'cpu', dtype=torch.bfloat16):
                 outputs = model(state_tensor)
                 v_out, aux_out = outputs[1], outputs[2]
+                v_logits = v_out[0].float()
+                wdl_probs = torch.softmax(v_logits, dim=0)
+                expected_value = (wdl_probs[0] * 1.0 + wdl_probs[1] * 0.0 + wdl_probs[2] * -1.0).item()
         
         move_info = {
-            'sid': sid, 'move': ai_move.uci(), 'evaluation': float(v_out.item()),
+            'sid': sid, 'move': ai_move.uci(), 'evaluation': expected_value,
             'moves_left': float(aux_out[0, 0].item()), 'material': float(aux_out[0, 1].item()), 'timestamp': now
         }
         
