@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepVision | Alive Mode Admin</title>
+    <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #020617;
+            --panel-bg: rgba(15, 23, 42, 0.9);
+            --accent: #10b981;
+            --accent-glow: rgba(16, 185, 129, 0.2);
+            --text-main: #f8fafc;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-main);
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .admin-sidebar {
+            width: 400px;
+            background: #0f172a;
+            border-right: 1px solid #1e293b;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+        }
+
+        .main-viewer {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: radial-gradient(circle at center, #111827, #020617);
+        }
+
+        .glass-panel {
+            background: var(--panel-bg);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .session-item {
+            padding: 12px;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.05);
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-left: 4px solid transparent;
+        }
+
+        .session-item:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        .session-item.active {
+            border-left-color: var(--accent);
+            background: rgba(16, 185, 129, 0.1);
+        }
+
+        .feed {
+            flex: 1;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: #94a3b8;
+        }
+
+        .feed-entry {
+            margin-bottom: 8px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+        }
+
+        .badge {
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: var(--accent);
+            color: black;
+            font-weight: bold;
+            font-size: 0.7rem;
+        }
+
+        #live-board {
+            width: 70vh;
+            border: 10px solid #1e293b;
+            border-radius: 8px;
+            box-shadow: 0 0 100px rgba(0,0,0,0.5);
+        }
+
+        h1 { font-size: 1.2rem; margin: 0 0 5px 0; color: var(--accent); }
+        .stat { color: #64748b; font-size: 0.9rem; margin-bottom: 20px; }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+
+        .shake {
+            animation: shake 0.2s ease-in-out 0s 2;
+        }
+    </style>
+</head>
+<body>
+
+<div class="admin-sidebar">
+    <div class="glass-panel">
+        <h1>Alive Mode</h1>
+        <div class="stat">Monitoring <span id="user-count">0</span> Active Sessions</div>
+        <div style="font-size: 0.7rem; color: #475569;">Total Global Moves: <span id="global-count">0</span></div>
+    </div>
+
+    <div class="glass-panel" style="flex: 1; display: flex; flex-direction: column;">
+        <div style="font-weight: 600; margin-bottom: 15px;">Active Sessions</div>
+        <div id="session-list" style="flex: 1; overflow-y: auto;">
+            <div style="color: #475569;">No active users...</div>
+        </div>
+    </div>
+
+    <div class="glass-panel" style="height: 200px; display: flex; flex-direction: column;">
+        <div style="font-weight: 600; margin-bottom: 10px;">Global Feed</div>
+        <div id="global-feed" class="feed"></div>
+    </div>
+</div>
+
+<div class="main-viewer">
+    <div id="live-board"></div>
+    <div id="session-info" style="margin-top: 20px; text-align: center; width: 100%; max-width: 600px;">
+        <div id="current-sid" style="color: var(--accent); font-weight: bold; font-size: 1.1rem;">Select a session to watch</div>
+        
+        <div class="glass-panel" style="margin-top: 15px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 15px;">
+            <div>
+                <div style="font-size: 0.7rem; color: #64748b; text-transform: uppercase;">Current Turn</div>
+                <div id="current-turn" style="font-weight: bold; color: #f8fafc;">-</div>
+            </div>
+            <div>
+                <div style="font-size: 0.7rem; color: #64748b; text-transform: uppercase;">Game Status</div>
+                <div id="current-status" style="font-weight: bold; color: #f8fafc;">-</div>
+            </div>
+            <div>
+                <div style="font-size: 0.7rem; color: #64748b; text-transform: uppercase;">AI Evaluation</div>
+                <div id="current-eval" style="font-weight: bold; color: var(--accent);">0.00</div>
+            </div>
+        </div>
+        
+        <div id="winning-bar" style="height: 4px; background: #334155; border-radius: 2px; margin-top: 10px; overflow: hidden;">
+            <div id="winning-fill" style="height: 100%; width: 50%; background: var(--accent); transition: all 0.5s;"></div>
+        </div>
+    </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+<script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+    const socket = io('/admin');
+    const board = Chessboard('live-board', {
+        position: 'start',
+        pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
+    });
+    let selectedSid = null;
+    let sessions = {};
+
+    socket.on('init_state', (data) => {
+        sessions = data.sessions;
+        const sids = Object.keys(sessions);
+        if (sids.length > 0 && !selectedSid) {
+            selectSession(sids[0]);
+        }
+        updateUI();
+    });
+
+    socket.on('live_update', (data) => {
+        const isNew = !sessions[data.sid];
+        sessions[data.sid] = sessions[data.sid] || { moves: [] };
+        sessions[data.sid].last_fen = data.fen;
+        sessions[data.sid].last_eval = data.eval;
+        sessions[data.sid].last_turn = data.turn;
+        sessions[data.sid].last_check = data.in_check;
+        sessions[data.sid].last_over = data.is_over;
+        sessions[data.sid].last_status = data.is_over ? 'GAME OVER' : (data.in_check ? 'IN CHECK' : 'Playing');
+        
+        // Auto-select if first session
+        if (!selectedSid) selectSession(data.sid);
+        
+        if (selectedSid === data.sid) {
+            board.position(data.fen, false); // false = no animation for lower latency
+            $('#current-eval').text(data.eval.toFixed(2));
+            $('#current-turn').text(data.turn);
+            const status = data.is_over ? 'GAME OVER' : (data.in_check ? '⚠️ IN CHECK' : 'Playing');
+            $('#current-status').text(status);
+            $('#current-status').css('color', data.in_check || data.is_over ? '#f43f5e' : '#f8fafc');
+            
+            if (data.in_check) {
+                $('#current-status').addClass('shake');
+                setTimeout(() => $('#current-status').removeClass('shake'), 500);
+            }
+            
+            const percent = ((data.eval + 1) / 2) * 100;
+            $('#winning-fill').css('width', Math.max(5, Math.min(95, percent)) + '%');
+        }
+        
+        // Add to feed
+        const entry = `<div class="feed-entry">
+            <span class="badge">MOVE</span> ${data.sid.substring(0,6)}: ${data.move} (Eval: ${data.eval.toFixed(2)})
+        </div>`;
+        $('#global-feed').prepend(entry);
+        
+        $('#user-count').text(data.active_users);
+        $('#global-count').text(data.global_total);
+        updateUI();
+    });
+
+    function updateUI() {
+        const list = $('#session-list');
+        list.empty();
+        
+        Object.keys(sessions).forEach(sid => {
+            const s = sessions[sid];
+            const item = $(`
+                <div class="session-item ${selectedSid === sid ? 'active' : ''}" onclick="selectSession('${sid}')">
+                    <div style="font-weight: 600;">Session ${sid.substring(0,8)}</div>
+                    <div style="font-size: 0.75rem; color: #64748b;">
+                        Moves: ${s.moves ? s.moves.length : 0} | Eval: ${s.last_eval ? s.last_eval.toFixed(2) : '0.00'}
+                    </div>
+                </div>
+            `);
+            list.append(item);
+        });
+    }
+
+    function selectSession(sid) {
+        selectedSid = sid;
+        $('#current-sid').text(`Watching: ${sid.substring(0,8)}...`);
+        if (sessions[sid]) {
+            const s = sessions[sid];
+            if (s.last_fen) board.position(s.last_fen);
+            if (s.last_eval !== undefined) $('#current-eval').text(s.last_eval.toFixed(2));
+            if (s.last_turn) $('#current-turn').text(s.last_turn);
+            if (s.last_status) {
+                $('#current-status').text(s.last_status);
+                $('#current-status').css('color', s.last_status !== 'Playing' ? '#f43f5e' : '#f8fafc');
+            }
+        }
+        updateUI();
+    }
+</script>
+</body>
+</html>

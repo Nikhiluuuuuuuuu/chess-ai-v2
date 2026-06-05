@@ -1,0 +1,3 @@
+.venv/
+self_play_data/
+__pycache__/

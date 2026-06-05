@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DeepVision | Super-Human Chess AI</title>
+    <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --panel-bg: rgba(30, 41, 59, 0.7);
+            --accent: #38bdf8;
+            --accent-glow: rgba(56, 189, 248, 0.3);
+            --text-main: #f8fafc;
+            --text-dim: #94a3b8;
+            --white-sq: #e2e8f0;
+            --black-sq: #475569;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: radial-gradient(circle at top left, #1e293b, #0f172a);
+            color: var(--text-main);
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow-x: hidden;
+            overscroll-behavior-y: contain; /* Prevent pull-to-refresh */
+        }
+
+        .main-layout {
+            display: grid;
+            grid-template-columns: 320px 1fr 320px;
+            grid-template-rows: 100vh;
+            gap: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: #0f172a;
+        }
+
+        @media (max-width: 1200px) {
+            .main-layout {
+                grid-template-columns: 280px 1fr 280px;
+            }
+        }
+
+        @media (max-orientation: portrait), (max-width: 1000px) {
+            .main-layout {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto 1fr auto;
+                height: auto;
+                min-height: 100vh;
+                overflow-y: auto;
+            }
+            .sidebar {
+                height: auto !important;
+                padding: 10px !important;
+            }
+            #board {
+                width: 95vw !important;
+                height: 95vw !important;
+            }
+        }
+
+        /* Center Column: The Board */
+        .board-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            background: radial-gradient(circle at center, #1e293b, #0f172a);
+        }
+
+        #board {
+            width: min(70vw, 85vh);
+            aspect-ratio: 1 / 1;
+            border-radius: 4px;
+            box-shadow: 0 0 50px rgba(0,0,0,0.8), 0 0 20px var(--accent-glow);
+            border: 8px solid #1e293b;
+            touch-action: none;
+        }
+
+        .sidebar {
+            height: 100vh;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            background: rgba(15, 23, 42, 0.8);
+            border-right: 1px solid rgba(255,255,255,0.05);
+            box-sizing: border-box;
+        }
+
+        .sidebar-right {
+            border-right: none;
+            border-left: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .glass-panel {
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        h1 {
+            font-weight: 700;
+            font-size: 2rem;
+            margin: 0;
+            background: linear-gradient(to right, #38bdf8, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -1px;
+        }
+
+        .subtitle {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+            font-family: 'JetBrains+Mono', monospace;
+        }
+
+        /* Eval Bar */
+        .eval-section {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .eval-label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-dim);
+        }
+
+        .eval-bar-bg {
+            height: 12px;
+            background: #1e293b;
+            border-radius: 6px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #eval-bar-fill {
+            height: 100%;
+            width: 50%; /* Neutral */
+            background: linear-gradient(to right, #ef4444, #22c55e);
+            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        #eval-text {
+            font-family: 'JetBrains+Mono', monospace;
+            font-size: 1.2rem;
+            color: var(--accent);
+        }
+
+        /* Status & History */
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            background: #334155;
+            font-size: 0.85rem;
+            margin-bottom: 15px;
+        }
+
+        #history {
+            height: 150px;
+            overflow-y: auto;
+            background: rgba(15, 23, 42, 0.5);
+            border-radius: 8px;
+            padding: 10px;
+            font-family: 'JetBrains+Mono', monospace;
+            font-size: 0.9rem;
+            color: var(--text-dim);
+            line-height: 1.6;
+        }
+
+        /* Buttons */
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .btn {
+            flex: 1;
+            background: #334155;
+            border: 1px solid rgba(255,255,255,0.1);
+            color: white;
+            padding: 12px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background: #475569;
+            transform: translateY(-2px);
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: #0f172a;
+        }
+
+        .btn-primary:hover {
+            background: #7dd3fc;
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        /* Custom scrollbar */
+        #history::-webkit-scrollbar { width: 6px; }
+        #history::-webkit-scrollbar-track { background: transparent; }
+        #history::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+
+        @media (max-width: 900px) {
+            .main-layout {
+                grid-template-columns: 1fr;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+            }
+            #board { width: 90vw; max-width: 400px; }
+            .sidebar { width: 90vw; max-width: 400px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="main-layout">
+    <!-- Left Sidebar: Analysis -->
+    <div class="sidebar">
+        <div class="glass-panel">
+            <h1>DeepVision</h1>
+            <div class="subtitle">v2.0 // 20M ENGINE</div>
+            <div id="status-badge" class="status-badge">White to move</div>
+            
+            <div class="eval-section">
+                <div class="eval-label">Position Eval</div>
+                <div id="eval-text" style="font-size: 1.5rem;">+0.00</div>
+                <div class="eval-bar-bg">
+                    <div id="eval-bar-fill"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-panel" style="margin-top: 20px;">
+            <div class="eval-label">Neural Metrics</div>
+            <div style="margin-top: 15px;">
+                <div class="eval-label" style="font-size: 0.7rem;">Complexity Index</div>
+                <div id="complexity-val" style="font-family: 'JetBrains Mono'; color: #818cf8;">0.00</div>
+            </div>
+            <div style="margin-top: 15px;">
+                <div class="eval-label" style="font-size: 0.7rem;">Material Balance</div>
+                <div id="material-val" style="font-family: 'JetBrains Mono'; color: #fbbf24;">0.00</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="board-container">
+        <div id="board"></div>
+    </div>
+
+    <!-- Right Sidebar: History & Controls -->
+    <div class="sidebar sidebar-right">
+        <div class="glass-panel">
+            <div class="eval-label">Game Controls</div>
+            <div class="btn-group" style="margin-top: 15px;">
+                <button class="btn btn-primary" onclick="resetGame()">New Game</button>
+                <button class="btn" onclick="undoMove()">Undo</button>
+            </div>
+            <button class="btn" style="width: 100%; margin-top: 10px; border-color: #10b981; color: #10b981;" onclick="copyShareLink()">🔗 Share Live Match</button>
+            <button id="toggle-1v1" class="btn" style="width: 100%; margin-top: 10px; border-color: #f59e0b; color: #f59e0b;" onclick="toggle1v1()">🤝 Switch to 1v1 Mode</button>
+        </div>
+
+        <div class="glass-panel" style="margin-top: 20px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+            <div class="eval-label">Move History</div>
+            <div id="history" style="flex: 1; margin-top: 10px; overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; color: var(--text-dim);">Waiting...</div>
+        </div>
+    </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+<script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+
+<script>
+    var board = null;
+    var game = new Chess();
+    var $status = $('#status-badge');
+    var $evalText = $('#eval-text');
+    var $evalBar = $('#eval-bar-fill');
+    var $history = $('#history');
+    var sid = Math.random().toString(36).substring(2, 10);
+    var is1v1 = false;
+
+    function onDragStart (source, piece, position, orientation) {
+        if (game.game_over()) return false;
+        if (!is1v1 && piece.search(/^b/) !== -1) return false;
+    }
+
+    function updateEval(val) {
+        $evalText.html((val > 0 ? '+' : '') + val.toFixed(2));
+        // Map -1.0...1.0 to 0%...100%
+        var percent = ((val + 1) / 2) * 100;
+        percent = Math.max(5, Math.min(95, percent));
+        $evalBar.css('width', percent + '%');
+    }
+
+    function updateHistory() {
+        var moves = game.history();
+        var html = '';
+        for (var i = 0; i < moves.length; i += 2) {
+            html += (Math.floor(i/2) + 1) + '. ' + moves[i] + ' ' + (moves[i+1] || '') + '<br>';
+        }
+        $history.html(html || 'Game started...');
+        $history.scrollTop($history[0].scrollHeight);
+    }
+
+    function makeAiMove () {
+        $status.html('AI is thinking...');
+        
+        $.ajax({
+            url: '/make_move?sid=' + sid,
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ fen: game.fen() }),
+            success: function(data) {
+                if (data.move) {
+                    game.move(data.move, { sloppy: true });
+                    board.position(game.fen(), true); 
+                    updateEval(data.evaluation);
+                    $('#complexity-val').html(data.complexity.toFixed(4));
+                    $('#material-val').html(data.material.toFixed(2));
+                }
+                updateStatus();
+                updateHistory();
+            },
+            error: function() {
+                updateStatus();
+                $status.append(' (Server Error)');
+            }
+        });
+    }
+
+    function onDrop (source, target) {
+        var move = game.move({
+            from: source,
+            to: target,
+            promotion: 'q'
+        });
+
+        if (move === null) return 'snapback';
+
+        updateStatus();
+        updateHistory();
+        
+        // Synchronize board for special moves (castling, en passant)
+        board.position(game.fen());
+
+        // Broadcast human move in 1v1 mode
+        if (is1v1) {
+            $.ajax({
+                url: '/make_move?sid=' + sid + '&type=human',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ fen: game.fen(), human_only: true })
+            });
+        } else {
+            window.setTimeout(makeAiMove, 300);
+        }
+    }
+
+    function onSnapEnd () {
+        board.position(game.fen());
+    }
+
+    function updateStatus () {
+        var status = '';
+        var moveColor = game.turn() === 'w' ? 'White' : 'Black';
+
+        if (game.in_checkmate()) {
+            status = 'CHECKMATE - ' + (game.turn() === 'w' ? 'Black' : 'White') + ' Wins';
+        } else if (game.in_draw()) {
+            status = 'DRAW';
+        } else {
+            status = moveColor + ' to move';
+            if (game.in_check()) {
+                status = `<span style="color: #f43f5e; font-weight: bold;">${moveColor} in CHECK!</span>`;
+            }
+        }
+        $status.html(status);
+    }
+
+    function resetGame() {
+        game.reset();
+        board.start();
+        updateStatus();
+        updateEval(0);
+        $history.html('Game started...');
+    }
+
+    function undoMove() {
+        game.undo(); // Undo AI
+        game.undo(); // Undo Human
+        board.position(game.fen());
+        updateStatus();
+        updateHistory();
+    }
+
+    var config = {
+        draggable: true,
+        position: 'start',
+        pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
+        onDragStart: onDragStart,
+        onDrop: onDrop,
+        onSnapEnd: onSnapEnd
+    };
+    board = Chessboard('board', config);
+    updateStatus();
+
+    function toggle1v1() {
+        is1v1 = !is1v1;
+        $('#toggle-1v1').text(is1v1 ? '🤖 Switch to AI Mode' : '🤝 Switch to 1v1 Mode');
+        $status.html(is1v1 ? '1v1 Mode Active' : 'AI Mode Active');
+        resetGame();
+    }
+
+    function copyShareLink() {
+        const url = window.location.origin + '?mode=spectate&sid=' + sid;
+        navigator.clipboard.writeText(url).then(() => {
+            alert('Live Spectator Link copied! Send this to friends to let them watch.');
+        });
+    }
+
+    // DYNAMIC RESIZING
+    $(window).on('resize', function() {
+        board.resize();
+    });
+</script>
+</body>
+</html>
