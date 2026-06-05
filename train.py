@@ -105,7 +105,8 @@ class DeepVisionElite(nn.Module):
         self.policy_head = MoEPolicyHead(256)
         self.mirror_head = MoEPolicyHead(256) 
         self.dsi_head = nn.Sequential(nn.Conv2d(256, 32, 1), nn.BatchNorm2d(32), nn.GELU(), nn.Flatten(), nn.Linear(32*8*8, 4096))
-        self.value_head = nn.Sequential(nn.Conv2d(256, 8, 1), nn.BatchNorm2d(8), nn.GELU(), nn.Flatten(), nn.Linear(8*8*8, 256), nn.GELU(), nn.Linear(256, 1), nn.Tanh())
+        self.value_head = nn.Sequential(nn.Conv2d(256, 8, 1), nn.BatchNorm2d(8), nn.GELU(), nn.Flatten(), nn.Linear(8*8*8, 256), nn.GELU(), nn.Linear(256, 3))
+        self.dtm_head = nn.Sequential(nn.Conv2d(256, 8, 1), nn.BatchNorm2d(8), nn.GELU(), nn.Flatten(), nn.Linear(8*8*8, 256), nn.GELU(), nn.Linear(256, 1))
         self.lookahead_head = nn.Sequential(nn.Conv2d(256, 32, 1), nn.BatchNorm2d(32), nn.GELU(), nn.Flatten(), nn.Linear(32*8*8, 512), nn.GELU(), nn.Linear(512, 256))
         self.aux_head = nn.Sequential(nn.Conv2d(256, 4, 1), nn.BatchNorm2d(4), nn.GELU(), nn.Flatten(), nn.Linear(4*8*8, 128), nn.GELU(), nn.Linear(128, 2))
 
@@ -119,7 +120,7 @@ class DeepVisionElite(nn.Module):
             pooled = torch.mean(x_flat, dim=1, keepdim=True)
             x_flat = x_flat + self.refinement_mlp(self.reasoner(x_flat, pooled))
         x_final = x_flat.permute(0, 2, 1).view(b, c, h, w)
-        return self.policy_head(x_final), self.value_head(x_final), self.aux_head(x_final), self.lookahead_head(x_final), self.dsi_head(x_final), self.mirror_head(x_final)
+        return self.policy_head(x_final), self.value_head(x_final), self.aux_head(x_final), self.lookahead_head(x_final), self.dsi_head(x_final), self.mirror_head(x_final), self.dtm_head(x_final)
 
 # ==========================================
 # 2. UTILS & MCTS ENGINE
@@ -155,7 +156,9 @@ class MCTSNode:
         self.is_expanded = False
 
     def value(self):
-        return self.value_sum / self.visit_count if self.visit_count > 0 else 0
+        if self.visit_count > 0:
+            return self.value_sum / self.visit_count
+        return (self.parent.value() - 0.1) if self.parent else 0
 
     def select_child(self, c_puct=1.4):
         best_score, best_child = -float('inf'), None
@@ -216,7 +219,7 @@ class MCTSSearcher:
         tensors = torch.stack([board_to_tensor_elite(n.board) for n in nodes]).to(self.device)
         with torch.no_grad():
             with torch.amp.autocast('cuda' if torch.cuda.is_available() else 'cpu', dtype=torch.bfloat16):
-                p_out, v_out, _, _, dsi_out, mirror_out = self.model(tensors)
+                p_out, v_out, _, _, dsi_out, mirror_out, dtm_out = self.model(tensors)
                 
             for i, node in enumerate(nodes):
                 noise = 0
@@ -227,7 +230,9 @@ class MCTSSearcher:
                 
                 if node.parent is None: policy = 0.75 * policy + 0.25 * noise
                     
-                value = v_out[i].float().item()
+                v_logits = v_out[i].float()
+                wdl_probs = torch.softmax(v_logits, dim=0)
+                value = (wdl_probs[0] * 1.0 + wdl_probs[1] * 0.0 + wdl_probs[2] * -1.0).item()
                 ordered_moves = self._get_ordered_moves(node.board)
                 
                 for move in ordered_moves:
@@ -292,20 +297,22 @@ def play_single_game(mcts_engine):
     result = board.result()
     winner = 1.0 if result == "1-0" else (-1.0 if result == "0-1" else 0.0)
     values = [(winner * (1.0 if (i % 2 == 0) else -1.0)) for i in range(len(states))]
-    return states, policies, values
+    dtms = [len(states) - i for i in range(len(states))]
+    return states, policies, values, dtms
 
 def generate_self_play_data(model):
     model.eval()
     mcts_engine = MCTSSearcher(model, DEVICE) 
-    all_states, all_policies, all_values = [], [], []
+    all_states, all_policies, all_values, all_dtms = [], [], [], []
     
     print(f"\n--- GENERATING DATA ({GAMES_PER_ITERATION} GAMES) ---")
     for game_idx in range(GAMES_PER_ITERATION):
         start = time.time()
-        s, p, v = play_single_game(mcts_engine)
+        s, p, v, d = play_single_game(mcts_engine)
         all_states.extend(s)
         all_policies.extend(p)
         all_values.extend(v)
+        all_dtms.extend(d)
         print(f"Game {game_idx+1}/{GAMES_PER_ITERATION} | Moves: {len(s)} | Time: {time.time()-start:.1f}s | Result: {v[0]}")
         
     save_path = os.path.join(DATA_DIR, f"rl_batch_{int(time.time())}.npz")
@@ -313,7 +320,8 @@ def generate_self_play_data(model):
         save_path, 
         boards=np.array(all_states), 
         policies=np.array(all_policies), 
-        values=np.array(all_values, dtype=np.float32)
+        values=np.array(all_values, dtype=np.float32),
+        dtms=np.array(all_dtms, dtype=np.float32)
     )
     print(f"Saved {len(all_states)} positions to {save_path}")
 
@@ -323,16 +331,21 @@ def generate_self_play_data(model):
 class RLDataset(Dataset):
     def __init__(self, data_dir):
         files = glob.glob(os.path.join(data_dir, "*.npz"))
-        self.boards, self.policies, self.values = [], [], []
+        self.boards, self.policies, self.values, self.dtms = [], [], [], []
         for f in files:
             data = np.load(f)
             self.boards.append(data['boards'])
             self.policies.append(data['policies'])
             self.values.append(data['values'])
+            if 'dtms' in data:
+                self.dtms.append(data['dtms'])
+            else:
+                self.dtms.append(np.zeros(len(data['boards']), dtype=np.float32))
             
         self.boards = np.concatenate(self.boards)
         self.policies = np.concatenate(self.policies)
         self.values = np.concatenate(self.values)
+        self.dtms = np.concatenate(self.dtms)
         self.num_samples = len(self.boards)
 
     def __len__(self):
@@ -342,7 +355,8 @@ class RLDataset(Dataset):
         return (
             torch.from_numpy(self.boards[idx]), 
             torch.from_numpy(self.policies[idx]), 
-            torch.tensor([self.values[idx]], dtype=torch.float32)
+            torch.tensor([self.values[idx]], dtype=torch.float32),
+            torch.tensor([self.dtms[idx]], dtype=torch.float32)
         )
 
 def train_rl_step(model):
@@ -360,14 +374,14 @@ def train_rl_step(model):
     model.train()
     for epoch in range(RL_EPOCHS): 
         start_time = time.time()
-        for i, (s, p_target, v_target) in enumerate(loader):
-            s, p_target, v_target = s.to(DEVICE), p_target.to(DEVICE), v_target.to(DEVICE)
+        for i, (s, p_target, v_target, dtm_target) in enumerate(loader):
+            s, p_target, v_target, dtm_target = s.to(DEVICE), p_target.to(DEVICE), v_target.to(DEVICE), dtm_target.to(DEVICE)
             s = s.to(memory_format=torch.channels_last)
             
             optimizer.zero_grad(set_to_none=True)
             
             with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-                p_out, v_out, _, _, _, _ = model(s) 
+                p_out, v_out, _, _, _, _, dtm_out = model(s) 
                 
                 weights_policy = model.policy_head.last_router_weights
                 weights_mirror = model.mirror_head.last_router_weights
@@ -381,7 +395,17 @@ def train_rl_step(model):
                 
                 loss_balance = loss_balance_policy + loss_balance_mirror
                 
-                loss = policy_loss(p_out, p_target) + v_crit(v_out, v_target) + 0.01 * loss_balance
+                v_target_wdl = torch.zeros(v_target.size(0), dtype=torch.long, device=DEVICE)
+                v_target_wdl[v_target.squeeze() == 1.0] = 0
+                v_target_wdl[v_target.squeeze() == 0.0] = 1
+                v_target_wdl[v_target.squeeze() == -1.0] = 2
+                v_crit_wdl = nn.CrossEntropyLoss()
+                dtm_crit = nn.MSELoss()
+                
+                loss_v = v_crit_wdl(v_out, v_target_wdl)
+                loss_dtm = dtm_crit(dtm_out, dtm_target)
+                
+                loss = policy_loss(p_out, p_target) + loss_v + 0.1 * loss_dtm + 0.01 * loss_balance
                 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
