@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from flask_socketio import SocketIO, emit
 
 # IMPORT THE ENGINE
-from kaggle_train_script import DeepVisionElite, board_to_tensor_elite, MCTSSearcher
+from train import DeepVisionElite, board_to_tensor_elite, MCTSSearcher
 
 load_dotenv()
 app = Flask(__name__)
@@ -79,8 +79,8 @@ def make_move():
 
         if human_only: return jsonify({'status': 'broadcasted'})
 
-        # AI MCTS Search (Evaluates 64 boards at a time for 3 seconds)
-        ai_move = mcts_engine.search(board, max_time=3.0, batch_size=64)
+        # AI MCTS Search (Evaluates 1024 boards at a time for 3 seconds)
+        ai_move = mcts_engine.search(board, max_time=3.0, batch_size=1024)
         board.push(ai_move)
         
         # Final Evaluation for UI metrics

@@ -88,6 +88,7 @@ class MoEPolicyHead(nn.Module):
         self.router = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(in_channels, 32), nn.GELU(), nn.Linear(32, 3), nn.Softmax(dim=-1))
     def forward(self, x):
         weights = self.router(x)
+        self.last_router_weights = weights
         expert_outputs = torch.stack([expert(x) for expert in self.experts], dim=1)
         return torch.bmm(weights.unsqueeze(1), expert_outputs).squeeze(1)
 
@@ -169,6 +170,18 @@ class MCTSSearcher:
         self.model = model
         self.device = device
 
+    def search(self, board, max_time=3.0, batch_size=64):
+        """Used by app.py: Searches for the best move within a time limit."""
+        root = MCTSNode(board.copy())
+        start_time = time.time()
+        self._expand_batch([root])
+        
+        while time.time() - start_time < max_time:
+            self._run_batch_iteration(root, batch_size, max_time, start_time)
+            
+        if not root.children: return list(board.legal_moves)[0]
+        return max(root.children.items(), key=lambda x: x[1].visit_count)[0]
+
     def search_for_self_play(self, board, simulations=200, batch_size=64):
         root = MCTSNode(board.copy())
         self._expand_batch([root])
@@ -179,9 +192,11 @@ class MCTSSearcher:
             nodes_evaluated += leaves_expanded
         return root
 
-    def _run_batch_iteration(self, root, batch_size):
+    def _run_batch_iteration(self, root, batch_size, max_time=None, start_time=None):
         leaves_to_expand = []
         while len(leaves_to_expand) < batch_size:
+            if max_time and (time.time() - start_time >= max_time): break
+                
             node = root
             while node.is_expanded and node.children:
                 node = node.select_child()
@@ -353,7 +368,20 @@ def train_rl_step(model):
             
             with torch.amp.autocast('cuda', dtype=torch.bfloat16):
                 p_out, v_out, _, _, _, _ = model(s) 
-                loss = policy_loss(p_out, p_target) + v_crit(v_out, v_target)
+                
+                weights_policy = model.policy_head.last_router_weights
+                weights_mirror = model.mirror_head.last_router_weights
+                
+                N_exp = weights_policy.size(1)
+                P_policy = weights_policy.mean(dim=0)
+                loss_balance_policy = N_exp * torch.sum(P_policy * P_policy)
+                
+                P_mirror = weights_mirror.mean(dim=0)
+                loss_balance_mirror = N_exp * torch.sum(P_mirror * P_mirror)
+                
+                loss_balance = loss_balance_policy + loss_balance_mirror
+                
+                loss = policy_loss(p_out, p_target) + v_crit(v_out, v_target) + 0.01 * loss_balance
                 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
